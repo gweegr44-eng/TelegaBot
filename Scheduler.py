@@ -1,16 +1,24 @@
-import asyncio
 import json
 from datetime import datetime, timedelta, timezone
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.schedulers.background import BackgroundScheduler
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from Config import TZ
 from Storage import Storage
 from CalendarApi import list_upcoming_events
+import asyncio
 
 notified_events = {}
 
-async def check_and_notify(bot, storage: Storage):
+def check_and_notify(bot, storage: Storage):
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(_async_check(bot, storage))
+    finally:
+        loop.close()
+
+async def _async_check(bot, storage: Storage):
     now_utc = datetime.utcnow()
     users = storage.get_all_users_with_credentials()
     for user in users:
@@ -57,10 +65,7 @@ async def check_and_notify(bot, storage: Storage):
             print(f"[Scheduler] Ошибка user_id={user_id}: {e}")
 
 def start_scheduler(bot, storage: Storage):
-    scheduler = AsyncIOScheduler()
-    scheduler.add_job(
-        lambda: asyncio.create_task(check_and_notify(bot, storage)),
-        'interval', minutes=5, id='calendar_check'
-    )
+    scheduler = BackgroundScheduler()
+    scheduler.add_job(lambda: check_and_notify(bot, storage), 'interval', minutes=5, id='calendar_check')
     scheduler.start()
     print("[Scheduler] Планировщик запущен (интервал 5 мин)")

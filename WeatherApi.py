@@ -1,5 +1,5 @@
 import requests
-from config import OWM_API_KEY
+from Config import OWM_API_KEY
 
 def get_weather(city: str, country: str = None) -> str:
     if not OWM_API_KEY:

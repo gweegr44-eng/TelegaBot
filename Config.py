@@ -8,3 +8,5 @@ GC_CREDENTIALS_PATH = os.getenv("GC_CREDENTIALS_PATH", "credentials.json")
 DB_PATH = os.getenv("DB_PATH", "database.db")
 TZ = os.getenv("TZ", "Europe/Moscow")
 OWM_API_KEY = os.getenv("OWM_API_KEY")
+
+print("Загруженный токен:", repr(TG_BOT_TOKEN))  # теперь переменная уже определена
