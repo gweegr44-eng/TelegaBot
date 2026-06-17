@@ -1,10 +1,48 @@
 import sqlite3
 import json
+from datetime import datetime
 
 class Storage:
     def __init__(self, db_path='database.db'):
         self.conn = sqlite3.connect(db_path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
+        self._ensure_schema()
+
+    def _ensure_schema(self):
+        cur = self.conn.cursor()
+        cur.executescript('''
+            CREATE TABLE IF NOT EXISTS users (
+                user_id INTEGER PRIMARY KEY,
+                calendar_id TEXT DEFAULT 'primary',
+                reminder_minutes INTEGER DEFAULT 30,
+                access_token TEXT,
+                refresh_token TEXT,
+                token_expiry TEXT,
+                credentials_json TEXT,
+                city TEXT,
+                country TEXT,
+                muted_events TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                event_id TEXT,
+                end_time TEXT,
+                title TEXT,
+                link TEXT,
+                FOREIGN KEY (user_id) REFERENCES users (user_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS user_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                text TEXT,
+                timestamp TEXT NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users (user_id)
+            );
+        ''')
+        self.conn.commit()
 
     def upsert_user(self, user_id: int, **kwargs):
         allowed_fields = {'calendar_id', 'reminder_minutes', 'access_token',
@@ -92,3 +130,27 @@ class Storage:
             if event_id in muted:
                 muted.remove(event_id)
         self.upsert_user(user_id, muted_events=json.dumps(muted))
+
+    def add_user_log(self, user_id: int, text: str):
+        ts = datetime.utcnow().isoformat()
+        self.conn.execute(
+            'INSERT INTO user_logs (user_id, text, timestamp) VALUES (?, ?, ?)',
+            (user_id, text, ts)
+        )
+        self.conn.commit()
+
+    def get_user_logs(self, user_id: int, limit=20):
+        rows = self.conn.execute(
+            '''SELECT text, timestamp FROM user_logs
+               WHERE user_id = ?
+               ORDER BY timestamp DESC
+               LIMIT ?''',
+            (user_id, limit)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_all_users_list(self):
+        rows = self.conn.execute(
+            'SELECT user_id, city, reminder_minutes FROM users'
+        ).fetchall()
+        return [dict(r) for r in rows]

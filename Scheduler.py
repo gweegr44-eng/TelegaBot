@@ -31,6 +31,7 @@ def start_scheduler(bot, storage: Storage):
     scheduler.add_job(lambda: asyncio.new_event_loop().run_until_complete(_check_completed()),
                       'interval', minutes=5, id='history_check')
     scheduler.start()
+    print("[Scheduler] Точные уведомления запущены")
 
 async def _reschedule_all():
     now = datetime.now(dt_timezone.utc)
@@ -53,7 +54,6 @@ async def _reschedule_all():
                                               time_max=(now + timedelta(hours=24)).isoformat())
                 for event in events:
                     event_id = event['id']
-                    # Проверяем, не заглушен ли этот event
                     if _storage.is_event_muted(user_id, event_id):
                         continue
                     start_str = event['start'].get('dateTime', event['start'].get('date'))
@@ -77,7 +77,7 @@ async def _reschedule_all():
                                 replace_existing=True
                             )
         except Exception as e:
-            print(f"Ошибка планирования user {user_id}: {e}")
+            print(f"[Scheduler] Ошибка планирования user {user_id}: {e}")
 
 async def send_reminder(user_id, event, calendar_id, credentials_json):
     key = f"{user_id}:{calendar_id}:{event['id']}"
@@ -112,7 +112,7 @@ async def send_reminder(user_id, event, calendar_id, credentials_json):
             msg += f"\n{weather}"
         await _bot.send_message(chat_id=user_id, text=msg, reply_markup=keyboard)
     except Exception as e:
-        print(f"Ошибка отправки уведомления: {e}")
+        print(f"[Scheduler] Ошибка отправки уведомления: {e}")
 
 async def _check_completed():
     now = datetime.now(dt_timezone.utc)
@@ -138,4 +138,4 @@ async def _check_completed():
                         link = event.get('htmlLink', '')
                         _storage.add_history(user_id, event['id'], end_dt.isoformat(), title, link)
         except Exception as e:
-            print(f"Ошибка истории user {user_id}: {e}")
+            print(f"[Scheduler] Ошибка истории user {user_id}: {e}")
