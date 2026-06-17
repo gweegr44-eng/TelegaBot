@@ -1,14 +1,15 @@
 import sqlite3
+import json
 
 class Storage:
     def __init__(self, db_path='database.db'):
-        self.conn = sqlite3.connect(db_path)
+        self.conn = sqlite3.connect(db_path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
 
     def upsert_user(self, user_id: int, **kwargs):
         allowed_fields = {'calendar_id', 'reminder_minutes', 'access_token',
                           'refresh_token', 'token_expiry', 'credentials_json',
-                          'city', 'country'}
+                          'city', 'country', 'muted_events'}
         data = {k: v for k, v in kwargs.items() if k in allowed_fields}
         if not data:
             return
@@ -21,7 +22,7 @@ class Storage:
             VALUES (?, {placeholders})
             ON CONFLICT(user_id) DO UPDATE SET {set_clause}
         '''
-        self.conn.execute(sql, [user_id] + values)
+        self.conn.execute(sql, [user_id] + values + values)
         self.conn.commit()
 
     def get_user(self, user_id: int):
@@ -44,7 +45,6 @@ class Storage:
             (user_id, event_id, end_time, title, link)
         )
         self.conn.commit()
-
         self.conn.execute('''
             DELETE FROM history
             WHERE id NOT IN (
@@ -66,3 +66,29 @@ class Storage:
             (user_id, limit)
         ).fetchall()
         return [dict(r) for r in rows]
+
+    def is_event_muted(self, user_id: int, event_id: str) -> bool:
+        user = self.get_user(user_id)
+        if not user or not user.get('muted_events'):
+            return False
+        try:
+            muted = json.loads(user['muted_events'])
+        except:
+            return False
+        return event_id in muted
+
+    def toggle_mute_event(self, user_id: int, event_id: str, mute: bool):
+        user = self.get_user(user_id)
+        muted = []
+        if user and user.get('muted_events'):
+            try:
+                muted = json.loads(user['muted_events'])
+            except:
+                muted = []
+        if mute:
+            if event_id not in muted:
+                muted.append(event_id)
+        else:
+            if event_id in muted:
+                muted.remove(event_id)
+        self.upsert_user(user_id, muted_events=json.dumps(muted))

@@ -3,7 +3,7 @@ import json
 
 SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
 
-def build_flow(client_config_path: str, redirect_uri: str = None):
+def build_flow(client_config_path: str, redirect_uri: str = 'http://localhost:8080'):
     with open(client_config_path, 'r') as f:
         client_config = json.load(f)
     flow = Flow.from_client_config(client_config, scopes=SCOPES, redirect_uri=redirect_uri)
