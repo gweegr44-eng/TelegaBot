@@ -61,9 +61,14 @@ def help_back_keyboard():
 def admin_keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("👥 Пользователи", callback_data='admin_users')],
-        [InlineKeyboardButton("📨 Отправить сообщение", callback_data='admin_send')],
         [InlineKeyboardButton("📋 Лог пользователя", callback_data='admin_log')],
         [InlineKeyboardButton("🔙 Закрыть", callback_data='main_menu')],
+    ])
+
+def chat_keyboard(user_id):
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔄 Обновить лог", callback_data=f'admin_log_{user_id}')],
+        [InlineKeyboardButton("🔙 Завершить чат", callback_data='end_chat')],
     ])
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -107,10 +112,17 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("🚫 Недостаточно прав.")
         return
+    context.user_data.pop('chat_with_user', None)
     await update.message.reply_text(
         "🛠 Админ-панель\nВыберите действие:",
         reply_markup=admin_keyboard()
     )
+
+async def stop_chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    context.user_data.pop('chat_with_user', None)
+    await update.message.reply_text("🚪 Чат завершён. Вы вернулись в админ-панель.", reply_markup=admin_keyboard())
 
 async def start_auth_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -178,7 +190,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     user = db.get_user(user_id)
 
-    # Помощь и подсказки
     if data == 'help_main':
         context.user_data['help_back'] = 'main'
         await query.edit_message_text(
@@ -298,7 +309,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         return
 
-    # Навигация
     if data == 'start_auth':
         await start_auth_callback(update, context)
         return
@@ -310,6 +320,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     if data == 'main_menu':
+        context.user_data.pop('chat_with_user', None)
         if user and user.get('credentials_json'):
             await query.edit_message_text(
                 "🌟 Главное меню\nЧто будем делать?",
@@ -322,7 +333,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         return
 
-    # Админские (только ADMIN_ID)
     if user_id == ADMIN_ID:
         if data == 'admin_users':
             users = db.get_all_users_list()
@@ -343,7 +353,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 city = user_info.get('city', '—')
                 text = f"👤 Пользователь `{uid}`\nГород: {city}\nУведомления: {user_info.get('reminder_minutes', '—')} мин."
                 kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("📨 Отправить сообщение", callback_data=f'admin_send_to_{uid}')],
+                    [InlineKeyboardButton("💬 Чат с пользователем", callback_data=f'chat_with_{uid}')],
                     [InlineKeyboardButton("📋 Лог сообщений", callback_data=f'admin_log_{uid}')],
                     [InlineKeyboardButton("🔙 Назад", callback_data='admin_users')],
                 ])
@@ -351,26 +361,40 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await query.answer("Пользователь не найден.")
             return
-        if data.startswith('admin_send_to_'):
-            uid = int(data.split('_')[3])
-            context.user_data['admin_recipient'] = uid
-            context.user_data['awaiting_admin_message'] = True
-            await query.edit_message_text(f"Введите текст сообщения для пользователя `{uid}`:", parse_mode='Markdown')
+        if data.startswith('chat_with_'):
+            uid = int(data.split('_')[2])
+            context.user_data['chat_with_user'] = uid
+            user_info = db.get_user(uid)
+            city = user_info.get('city', '—') if user_info else '—'
+            await query.edit_message_text(
+                f"📩 Вы в чате с пользователем `{uid}`\n"
+                f"Город: {city}\n\n"
+                "Все ваши сообщения (текст, стикеры, фото, видео и т.д.) будут пересылаться этому пользователю.\n"
+                "Текстовые сообщения получат подпись «Сообщение от Администратора».\n"
+                "Для выхода нажмите кнопку «Завершить чат».",
+                parse_mode='Markdown',
+                reply_markup=chat_keyboard(uid)
+            )
             return
-        if data == 'admin_send':
-            await query.edit_message_text("Введите ID получателя (user_id):")
-            context.user_data['awaiting_admin_recipient'] = True
+        if data == 'end_chat':
+            context.user_data.pop('chat_with_user', None)
+            await query.edit_message_text("🚪 Чат завершён.", reply_markup=admin_keyboard())
             return
         if data.startswith('admin_log_'):
             uid = int(data.split('_')[2])
             logs = db.get_user_logs(uid, 20)
             if not logs:
                 await query.edit_message_text(f"У пользователя `{uid}` нет логов.", parse_mode='Markdown',
-                                              reply_markup=admin_keyboard())
+                                              reply_markup=InlineKeyboardMarkup([
+                                                  [InlineKeyboardButton("🔙 Назад", callback_data=f'admin_user_{uid}')]
+                                              ]))
                 return
             lines = [f"{l['timestamp'][:16]} – {l['text'][:100]}" for l in logs]
             text = f"📋 Последние сообщения от `{uid}`:\n" + "\n".join(lines)
-            kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data=f'admin_user_{uid}')]])
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔄 Обновить", callback_data=f'admin_log_{uid}')],
+                [InlineKeyboardButton("🔙 Назад", callback_data=f'admin_user_{uid}')],
+            ])
             await query.edit_message_text(text, reply_markup=kb, parse_mode='Markdown')
             return
         if data == 'admin_log':
@@ -515,31 +539,19 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     db.add_user_log(user_id, text)
 
+    if user_id == ADMIN_ID and context.user_data.get('chat_with_user'):
+        recipient_id = context.user_data['chat_with_user']
+        try:
+            await context.bot.send_message(
+                chat_id=recipient_id,
+                text=f"📩 Сообщение от Администратора:\n\n{text}"
+            )
+            await update.message.reply_text("✅ Отправлено.")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Ошибка отправки: {e}")
+        return
+
     if user_id == ADMIN_ID:
-        if context.user_data.get('awaiting_admin_recipient'):
-            try:
-                recipient_id = int(text)
-            except ValueError:
-                await update.message.reply_text("⚠️ Введите числовой ID.")
-                return
-            context.user_data['admin_recipient'] = recipient_id
-            context.user_data.pop('awaiting_admin_recipient', None)
-            context.user_data['awaiting_admin_message'] = True
-            await update.message.reply_text(f"ID получателя `{recipient_id}` сохранён. Введите текст сообщения:", parse_mode='Markdown')
-            return
-        if context.user_data.get('awaiting_admin_message'):
-            recipient_id = context.user_data.get('admin_recipient')
-            if recipient_id:
-                try:
-                    await update.message.bot.send_message(chat_id=recipient_id, text=text)
-                    await update.message.reply_text("✅ Сообщение отправлено.")
-                except Exception as e:
-                    await update.message.reply_text(f"❌ Ошибка отправки: {e}")
-                context.user_data.pop('admin_recipient', None)
-                context.user_data.pop('awaiting_admin_message', None)
-            else:
-                await update.message.reply_text("Сначала укажите ID получателя через админ-панель.")
-            return
         if context.user_data.get('awaiting_admin_log_id'):
             try:
                 uid = int(text)
@@ -587,6 +599,37 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await receive_code(update, context)
 
+async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID or not context.user_data.get('chat_with_user'):
+        return
+
+    recipient_id = context.user_data['chat_with_user']
+    msg = update.message
+    caption = msg.caption or ""
+
+    try:
+        if msg.sticker:
+            await context.bot.send_sticker(chat_id=recipient_id, sticker=msg.sticker.file_id)
+        elif msg.photo:
+            await context.bot.send_photo(chat_id=recipient_id, photo=msg.photo[-1].file_id, caption=f"📩 Администратор:\n{caption}" if caption else None)
+        elif msg.video:
+            await context.bot.send_video(chat_id=recipient_id, video=msg.video.file_id, caption=f"📩 Администратор:\n{caption}" if caption else None)
+        elif msg.document:
+            await context.bot.send_document(chat_id=recipient_id, document=msg.document.file_id, caption=f"📩 Администратор:\n{caption}" if caption else None)
+        elif msg.audio:
+            await context.bot.send_audio(chat_id=recipient_id, audio=msg.audio.file_id, caption=f"📩 Администратор:\n{caption}" if caption else None)
+        elif msg.voice:
+            await context.bot.send_voice(chat_id=recipient_id, voice=msg.voice.file_id)
+        elif msg.video_note:
+            await context.bot.send_video_note(chat_id=recipient_id, video_note=msg.video_note.file_id)
+        else:
+            return
+
+        await update.message.reply_text("✅ Отправлено.")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Ошибка отправки: {e}")
+
 def setup_handlers(storage_instance: Storage):
     global db
     db = storage_instance
@@ -595,6 +638,10 @@ def setup_handlers(storage_instance: Storage):
         CommandHandler("help", help_cmd),
         CommandHandler("authorize", authorize_command),
         CommandHandler("admin", admin_command),
+        CommandHandler("stopchat", stop_chat_command),
         CallbackQueryHandler(button_handler),
         MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler),
+        MessageHandler(filters.PHOTO | filters.VIDEO | filters.Sticker.ALL |
+                       filters.Document.ALL | filters.AUDIO | filters.VOICE |
+                       filters.VIDEO_NOTE, media_handler),
     ]
